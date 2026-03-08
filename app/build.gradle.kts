@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.meshcart"
+    namespace = "com.meshcart"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.meshcart"
+        applicationId = "com.meshcart"
         minSdk = 27
         targetSdk = 36
         versionCode = 1
@@ -48,6 +48,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.bouncycastle.provider)
+    implementation(libs.bip39)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
