@@ -58,13 +58,11 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
     implementation(libs.nav.compose)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.lifecycle.compose)
-    implementation(libs.zxing.core)
-
-
+    implementation(libs.zxing)
+    ksp(libs.hilt.compiler)
     testImplementation(libs.coroutines.test)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

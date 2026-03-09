@@ -169,7 +169,7 @@ class InviteViewModel @Inject constructor(
 
     private fun deflate(input: ByteArray): ByteArray {
         val deflater = Deflater(Deflater.BEST_COMPRESSION).apply { setInput(input); finish() }
-        val buf = ByteArray(input.size)
+        val buf = ByteArray(input.size + 64)
         val len = deflater.deflate(buf)
         deflater.end()
         return buf.copyOf(len)
@@ -185,10 +185,8 @@ class InviteViewModel @Inject constructor(
     }
 
     private fun makeQr(content: String): Bitmap {
-        val bits = QRCodeWriter().encode(
-            content, BarcodeFormat.QR_CODE, 512, 512,
-            mapOf(EncodeHintType.MARGIN to 1)
-        )
+        val hints = HashMap<EncodeHintType, Any>().apply { put(EncodeHintType.MARGIN, 1) }
+        val bits = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, 512, 512, hints)
         return Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565).also { bmp ->
             for (x in 0 until 512) for (y in 0 until 512)
                 bmp.setPixel(x, y, if (bits[x, y]) Color.BLACK else Color.WHITE)

@@ -11,7 +11,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.navigation.navDeepLink
 import com.meshcart.ui.screens.*
 import com.meshcart.ui.theme.MeshCartTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -57,12 +56,11 @@ private fun MeshCartNav(intent: Intent) {
 
         composable(
             route = "invite/{listId}",
-            arguments = listOf(navArgument("listId") { type = NavType.StringType }),
-            deepLinks  = listOf(navDeepLink { uriPattern = "meshcart://invite?p={p}&l={listId}" })
+            arguments = listOf(navArgument("listId") { type = NavType.StringType })
         ) { back ->
             val listId = back.arguments?.getString("listId") ?: return@composable
             InviteScreen(
-                onBack   = { nav.popBackStack() },
+                onBack      = { nav.popBackStack() },
                 onConnected = {
                     nav.navigate("list/$listId") {
                         popUpTo("invite/$listId") { inclusive = true }

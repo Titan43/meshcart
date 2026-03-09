@@ -46,7 +46,7 @@ hilt-compiler = { module = "com.google.dagger:hilt-android-compiler", version.re
 nav-compose = { module = "androidx.navigation:navigation-compose", version.ref = "nav-compose" }
 hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
 lifecycle-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle-compose" }
-zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+zxing = { module = "com.google.zxing:core", version.ref = "zxing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
