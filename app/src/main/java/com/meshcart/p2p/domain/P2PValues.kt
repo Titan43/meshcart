@@ -15,8 +15,11 @@ sealed class ConnectionState {
     object Connecting : ConnectionState()
     object Connected : ConnectionState()
     object Disconnected : ConnectionState()
+    object Reconnecting : ConnectionState()
     data class Failed(val reason: String) : ConnectionState()
 }
 
 class PeerConnectionException(message: String, cause: Throwable? = null) :
     Exception(message, cause)
+// Added for ICE restart support
+// (Reconnecting replaces a brief Disconnected before the new ICE path opens)

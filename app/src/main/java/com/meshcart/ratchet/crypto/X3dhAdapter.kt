@@ -7,16 +7,20 @@ import com.meshcart.ratchet.domain.*
 
 class X3dhAdapter : X3dhPort {
 
-    override fun generateBundle(identity: Identity): X3dhBundle {
+    override fun generateBundle(identity: Identity): X3dhBundle =
+        generateBundleWithPrivateKey(identity).first
+
+    override fun generateBundleWithPrivateKey(identity: Identity): Pair<X3dhBundle, ByteArray> {
         val (spkPriv, spkPub) = newX25519KeyPair()
         val (_, otpkPub) = newX25519KeyPair()
         val signature = identity.sign(spkPub)
-        return X3dhBundle(
+        val bundle = X3dhBundle(
             identityPublic = identity.encryptionPublicKey.bytes,
             signedPreKeyPublic = spkPub,
             signedPreKeySignature = signature.bytes,
             oneTimePreKeyPublic = otpkPub
         )
+        return bundle to spkPriv
     }
 
     override fun initAsSender(

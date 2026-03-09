@@ -4,7 +4,10 @@ import com.meshcart.identity.domain.Identity
 import com.meshcart.identity.domain.NodeId
 
 interface X3dhPort {
+    /** Public bundle to advertise to peers. */
     fun generateBundle(identity: Identity): X3dhBundle
+    /** Same as generateBundle but also returns the SPK private key needed for initAsRecipient. */
+    fun generateBundleWithPrivateKey(identity: Identity): Pair<X3dhBundle, ByteArray>
     fun initAsSender(identity: Identity, recipientBundle: X3dhBundle): Pair<RatchetSession, X3dhInitMessage>
     fun initAsRecipient(identity: Identity, initMessage: X3dhInitMessage, localBundle: X3dhBundle, localSignedPreKeyPrivate: ByteArray, localOneTimePreKeyPrivate: ByteArray): RatchetSession
 }

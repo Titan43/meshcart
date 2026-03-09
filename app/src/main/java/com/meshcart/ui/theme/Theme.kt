@@ -1,57 +1,78 @@
 package com.meshcart.ui.theme
 
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Typography
+import com.meshcart.R
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+val Display = FontFamily(
+    Font(R.font.nunito_bold, FontWeight.Bold),
+    Font(R.font.nunito_extrabold, FontWeight.ExtraBold),
+    Font(R.font.nunito_semibold, FontWeight.SemiBold),
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
+val Body = FontFamily(
+    Font(R.font.dmsans_regular, FontWeight.Normal),
+    Font(R.font.dmsans_medium, FontWeight.Medium),
+    Font(R.font.dmsans_bold, FontWeight.Bold),
+)
 
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+// Warm organic palette
+val Background    = Color(0xFFFAF7F2)   // warm cream
+val Surface       = Color(0xFFFFFFFF)   // pure white cards
+val SurfaceWarm   = Color(0xFFF5EFE6)   // warm tinted surface
+val SurfaceTint   = Color(0xFFEDE4D8)   // pressed / hover state
+val Border        = Color(0xFFE8DDD0)   // warm divider
+val TextPrimary   = Color(0xFF2C2116)   // deep warm brown
+val TextSecondary = Color(0xFF8C7B6B)   // mid warm brown
+val TextMuted     = Color(0xFFBDAFA3)   // muted warm
+val Accent        = Color(0xFFD95F2B)   // terracotta
+val AccentLight   = Color(0xFFFAEDE5)   // accent tint background
+val AccentDark    = Color(0xFFB04A1E)   // pressed accent
+val Success       = Color(0xFF4A9E6E)   // sage green for checked items
+val SuccessLight  = Color(0xFFE8F5EE)   // success tint
+val Danger        = Color(0xFFCC3B3B)   // warm red
+
+private val MeshColorScheme = lightColorScheme(
+    primary           = Accent,
+    onPrimary         = Color.White,
+    primaryContainer  = AccentLight,
+    onPrimaryContainer= AccentDark,
+    secondary         = Success,
+    onSecondary       = Color.White,
+    background        = Background,
+    onBackground      = TextPrimary,
+    surface           = Surface,
+    onSurface         = TextPrimary,
+    surfaceVariant    = SurfaceWarm,
+    onSurfaceVariant  = TextSecondary,
+    outline           = Border,
+    error             = Danger,
+)
+
+val MeshTypography = Typography(
+    displayLarge  = TextStyle(fontFamily = Display, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp),
+    displayMedium = TextStyle(fontFamily = Display, fontWeight = FontWeight.Bold,      fontSize = 24.sp, lineHeight = 30.sp, letterSpacing = (-0.3).sp),
+    titleLarge    = TextStyle(fontFamily = Display, fontWeight = FontWeight.Bold,      fontSize = 20.sp, lineHeight = 26.sp),
+    titleMedium   = TextStyle(fontFamily = Display, fontWeight = FontWeight.SemiBold,  fontSize = 16.sp, lineHeight = 22.sp),
+    bodyLarge     = TextStyle(fontFamily = Body,    fontWeight = FontWeight.Normal,    fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium    = TextStyle(fontFamily = Body,    fontWeight = FontWeight.Normal,    fontSize = 14.sp, lineHeight = 20.sp),
+    labelLarge    = TextStyle(fontFamily = Body,    fontWeight = FontWeight.Medium,    fontSize = 14.sp, letterSpacing = 0.1.sp),
+    labelSmall    = TextStyle(fontFamily = Body,    fontWeight = FontWeight.Medium,    fontSize = 11.sp, letterSpacing = 0.5.sp),
 )
 
 @Composable
-fun MeshcartTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
+fun MeshCartTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
+        colorScheme = MeshColorScheme,
+        typography  = MeshTypography,
+        content     = content
     )
 }

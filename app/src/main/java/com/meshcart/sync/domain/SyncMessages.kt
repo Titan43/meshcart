@@ -1,6 +1,5 @@
 package com.meshcart.sync.domain
 
-import android.annotation.SuppressLint
 import com.meshcart.identity.domain.NodeId
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -8,28 +7,24 @@ import kotlinx.serialization.Serializable
 @Serializable
 sealed class SyncMessage {
 
-    @SuppressLint("UnsafeOptInUsageError")
     @Serializable @SerialName("hello")
     data class Hello(
         @Serializable(with = NodeIdSerializer::class) val senderId: NodeId,
         val clocks: Map<String, VectorClock>
     ) : SyncMessage()
 
-    @SuppressLint("UnsafeOptInUsageError")
     @Serializable @SerialName("delta")
     data class Delta(
         @Serializable(with = ListIdSerializer::class) val listId: ListId,
         val operations: List<Operation>
     ) : SyncMessage()
 
-    @SuppressLint("UnsafeOptInUsageError")
     @Serializable @SerialName("ack")
     data class Ack(
         @Serializable(with = ListIdSerializer::class) val listId: ListId,
         val clock: VectorClock
     ) : SyncMessage()
 
-    @SuppressLint("UnsafeOptInUsageError")
     @Serializable @SerialName("invite")
     data class Invite(
         @Serializable(with = ListIdSerializer::class) val listId: ListId,
@@ -37,16 +32,22 @@ sealed class SyncMessage {
         @Serializable(with = NodeIdSerializer::class) val inviteeNodeId: NodeId,
         val signature: ByteArray
     ) : SyncMessage()
+
+    /** ICE restart offer — sent when a peer's network changes. */
+    @Serializable @SerialName("ice_offer")
+    data class IceRestartOffer(val offerSdp: String) : SyncMessage()
+
+    /** ICE restart answer — sent in response to IceRestartOffer. */
+    @Serializable @SerialName("ice_answer")
+    data class IceRestartAnswer(val answerSdp: String) : SyncMessage()
 }
 
 @Serializable
 sealed class Operation {
 
-    @SuppressLint("UnsafeOptInUsageError")
     @Serializable @SerialName("upsert")
     data class Upsert(val item: ShoppingItem, val clock: VectorClock) : Operation()
 
-    @SuppressLint("UnsafeOptInUsageError")
     @Serializable @SerialName("remove")
     data class Remove(
         @Serializable(with = ItemIdSerializer::class) val itemId: ItemId,

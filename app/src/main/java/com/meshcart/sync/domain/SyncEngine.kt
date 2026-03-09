@@ -2,6 +2,8 @@ package com.meshcart.sync.domain
 
 import com.meshcart.identity.domain.Identity
 import com.meshcart.p2p.domain.MeshConnection
+import com.meshcart.p2p.domain.RenegotiationPort
+import com.meshcart.p2p.transport.WebRtcMeshConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -16,8 +18,31 @@ class SyncEngine(
     private val scope: CoroutineScope
 ) {
     fun onPeerConnected(connection: MeshConnection) {
-        scope.launch { sync.send(connection, SyncMessage.Hello(identity.nodeId, state.allClocks())) }
+        scope.launch {
+            if (connection is WebRtcMeshConnection) connection.awaitOpen()
+            sync.send(connection, SyncMessage.Hello(identity.nodeId, state.allClocks()))
+        }
+
+        // Receive and handle encrypted sync messages
         sync.receive(connection).onEach { message -> handle(connection, message) }.launchIn(scope)
+
+        // If this connection supports ICE restart, relay the signalling
+        // through the encrypted DataChannel so no extra out-of-band step is needed.
+        if (connection is RenegotiationPort) {
+            connection.outboundRestartOffer
+                .onEach { offer ->
+                    runCatching {
+                        sync.send(connection, SyncMessage.IceRestartOffer(offer.offerSdp))
+                    }
+                }.launchIn(scope)
+
+            connection.outboundRestartAnswer
+                .onEach { answer ->
+                    runCatching {
+                        sync.send(connection, SyncMessage.IceRestartAnswer(answer.answerSdp))
+                    }
+                }.launchIn(scope)
+        }
     }
 
     fun onLocalChange(listId: ListId, operation: Operation) {
@@ -31,10 +56,12 @@ class SyncEngine(
 
     private suspend fun handle(connection: MeshConnection, message: SyncMessage) {
         when (message) {
-            is SyncMessage.Hello -> onHello(connection, message)
-            is SyncMessage.Delta -> onDelta(message)
-            is SyncMessage.Ack   -> Unit
-            is SyncMessage.Invite -> onInvite(connection, message)
+            is SyncMessage.Hello          -> onHello(connection, message)
+            is SyncMessage.Delta          -> onDelta(message)
+            is SyncMessage.Ack            -> Unit
+            is SyncMessage.Invite         -> onInvite(connection, message)
+            is SyncMessage.IceRestartOffer  -> onIceRestartOffer(connection, message)
+            is SyncMessage.IceRestartAnswer -> onIceRestartAnswer(connection, message)
         }
     }
 
@@ -61,6 +88,24 @@ class SyncEngine(
         val localState = state.getState(listId)
         if (localState != null) {
             sync.send(connection, SyncMessage.Delta(listId, crdt.delta(localState, VectorClock())))
+        }
+    }
+
+    // ICE restart: the peer's network changed, they sent us a new offer
+    private suspend fun onIceRestartOffer(connection: MeshConnection, msg: SyncMessage.IceRestartOffer) {
+        if (connection is RenegotiationPort) {
+            connection.applyRestartOffer(
+                com.meshcart.p2p.domain.IceRestartOffer(msg.offerSdp)
+            )
+        }
+    }
+
+    // ICE restart: we sent a restart offer, peer responded with an answer
+    private fun onIceRestartAnswer(connection: MeshConnection, msg: SyncMessage.IceRestartAnswer) {
+        if (connection is RenegotiationPort) {
+            connection.applyRestartAnswer(
+                com.meshcart.p2p.domain.IceRestartAnswer(msg.answerSdp)
+            )
         }
     }
 }
