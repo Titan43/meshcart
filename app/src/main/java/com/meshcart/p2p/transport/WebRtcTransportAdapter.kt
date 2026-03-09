@@ -70,12 +70,16 @@ class WebRtcTransportAdapter(context: Context) : TransportPort {
         )
 
         pc.awaitSetRemoteDescription(SessionDescription(SessionDescription.Type.OFFER, offerSdp))
+
+        val channel = withTimeoutOrNull(8_000) { remoteChannel.await() }
+            ?: run {
+                pc.close()
+                throw PeerConnectionException("Invite link has expired — ask the owner to generate a new one")
+            }
+
         val answer = pc.awaitCreateSdp(isOffer = false)
         pc.awaitSetLocalDescription(answer)
         awaitIceGathering(gatherDone, hasCandidate)
-
-        val channel = withTimeoutOrNull(3_000) { remoteChannel.await() }
-            ?: throw PeerConnectionException("No DataChannel in offer")
 
         val conn = WebRtcMeshConnection(remoteNodeId, pc, channel, stateFlow, incomingFlow, this, scope)
         return AnswerHandle(conn, pc.localDescription.description)

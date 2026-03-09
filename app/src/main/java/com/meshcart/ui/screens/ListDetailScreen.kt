@@ -30,7 +30,7 @@ import com.meshcart.ui.viewmodel.ListDetailViewModel
 @Composable
 fun ListDetailScreen(
     onBack: () -> Unit,
-    onShowInviteQr: () -> Unit,
+    onShareList: () -> Unit,
     viewModel: ListDetailViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -62,7 +62,7 @@ fun ListDetailScreen(
                         style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary)
                     )
                 }
-                IconButton(onClick = onShowInviteQr) {
+                IconButton(onClick = onShareList) {
                     Icon(Icons.Default.Share, contentDescription = "Invite peer", tint = Accent)
                 }
             }

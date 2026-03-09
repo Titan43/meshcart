@@ -24,29 +24,47 @@ import com.meshcart.list.domain.ShoppingList
 import com.meshcart.sync.domain.ListId
 import com.meshcart.ui.components.*
 import com.meshcart.ui.theme.*
+import com.meshcart.ui.viewmodel.JoinUiState
+import com.meshcart.ui.viewmodel.JoinViewModel
 import com.meshcart.ui.viewmodel.ListsViewModel
 
 @Composable
 fun ListsScreen(
     onListClick: (ListId) -> Unit,
     onSettings: () -> Unit,
-    viewModel: ListsViewModel = hiltViewModel()
+    autoJoinUri: String? = null,
+    listsViewModel: ListsViewModel = hiltViewModel(),
+    joinViewModel: JoinViewModel = hiltViewModel()
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    var newListName by remember { mutableStateOf("") }
-    var showInput by remember { mutableStateOf(false) }
+    val listsState by listsViewModel.uiState.collectAsStateWithLifecycle()
+    val joinState  by joinViewModel.state.collectAsStateWithLifecycle()
+
+    var newListName  by remember { mutableStateOf("") }
+    var showNewList  by remember { mutableStateOf(false) }
+    var showJoin     by remember { mutableStateOf(false) }
+    var joinInput    by remember { mutableStateOf("") }
+
+    LaunchedEffect(autoJoinUri) {
+        if (autoJoinUri != null) {
+            joinInput = autoJoinUri
+            showJoin = true
+            joinViewModel.submit(autoJoinUri)
+        }
+    }
+
+    LaunchedEffect(joinState) {
+        if (joinState is JoinUiState.Connected) {
+            showJoin = false
+            joinInput = ""
+            joinViewModel.reset()
+        }
+    }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Background)
-            .statusBarsPadding()
+        modifier = Modifier.fillMaxSize().background(Background).statusBarsPadding()
     ) {
-        // Header card
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Surface)
+            modifier = Modifier.fillMaxWidth().background(Surface)
                 .padding(horizontal = 24.dp, vertical = 20.dp)
         ) {
             Row(
@@ -57,24 +75,73 @@ fun ListsScreen(
                 Column {
                     Text("My Lists", style = MaterialTheme.typography.displayMedium.copy(color = TextPrimary))
                     Spacer(Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         PulsingDot(size = 7.dp)
-                        Text("End-to-end encrypted", style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary))
+                        Text("End-to-end encrypted",
+                            style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary))
                     }
                 }
-                NodeIdBadge(viewModel.myNodeId.value)
+                NodeIdBadge(listsViewModel.myNodeId.value)
                 IconButton(onClick = onSettings) {
-                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = TextSecondary)
+                    Icon(Icons.Default.Settings, contentDescription = null, tint = TextSecondary)
                 }
             }
 
-            AnimatedVisibility(visible = showInput, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            AnimatedVisibility(showNewList, enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()) {
                 Column {
                     Spacer(Modifier.height(16.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        MeshInput(value = newListName, onValueChange = { newListName = it }, placeholder = "List name…", modifier = Modifier.weight(1f),
-                            onDone = { viewModel.createList(newListName); newListName = ""; showInput = false })
-                        MeshButton("Add", onClick = { viewModel.createList(newListName); newListName = ""; showInput = false })
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        MeshInput(
+                            value = newListName,
+                            onValueChange = { newListName = it },
+                            placeholder = "List name…",
+                            modifier = Modifier.weight(1f),
+                            onDone = {
+                                listsViewModel.createList(newListName)
+                                newListName = ""
+                                showNewList = false
+                            }
+                        )
+                        MeshButton("Add", onClick = {
+                            listsViewModel.createList(newListName)
+                            newListName = ""
+                            showNewList = false
+                        })
+                    }
+                }
+            }
+
+            AnimatedVisibility(showJoin, enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()) {
+                Column {
+                    Spacer(Modifier.height(16.dp))
+                    Text("Paste an invite link from the list owner",
+                        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        MeshInput(
+                            value = joinInput,
+                            onValueChange = { joinInput = it },
+                            placeholder = "meshcart://sdp?…",
+                            modifier = Modifier.weight(1f),
+                            onDone = { joinViewModel.submit(joinInput) }
+                        )
+                        when (joinState) {
+                            is JoinUiState.Connecting -> {
+                                CircularProgressIndicator(color = Accent, strokeWidth = 2.dp,
+                                    modifier = Modifier.size(24.dp))
+                            }
+                            else -> MeshButton("Join", onClick = { joinViewModel.submit(joinInput) })
+                        }
+                    }
+                    if (joinState is JoinUiState.Error) {
+                        Spacer(Modifier.height(6.dp))
+                        Text((joinState as JoinUiState.Error).message,
+                            style = MaterialTheme.typography.bodySmall.copy(color = Danger))
                     }
                 }
             }
@@ -82,44 +149,82 @@ fun ListsScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        if (state.isLoading) {
+        if (listsState.isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Accent, strokeWidth = 2.dp)
             }
-        } else if (state.lists.isEmpty()) {
-            EmptyState(onCreateClick = { showInput = true })
+        } else if (listsState.lists.isEmpty()) {
+            EmptyState(
+                onCreateClick = { showNewList = true; showJoin = false },
+                onJoinClick = { showJoin = true; showNewList = false }
+            )
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(state.lists, key = { it.id.value }) { list ->
-                    ListRow(list = list, isOwner = list.isOwner(viewModel.myNodeId), onClick = { onListClick(list.id) }, onDelete = { viewModel.deleteList(list.id) })
+                items(listsState.lists, key = { it.id.value }) { list ->
+                    ListRow(
+                        list = list,
+                        isOwner = list.isOwner(listsViewModel.myNodeId),
+                        onClick = { onListClick(list.id) },
+                        onDelete = { listsViewModel.deleteList(list.id) }
+                    )
                 }
             }
         }
 
-        Box(modifier = Modifier.fillMaxWidth().background(Surface).navigationBarsPadding().padding(16.dp), contentAlignment = Alignment.CenterEnd) {
-            MeshButton(text = if (showInput) "Cancel" else "+ New list", onClick = { showInput = !showInput }, danger = showInput)
+        Row(
+            modifier = Modifier.fillMaxWidth().background(Surface)
+                .navigationBarsPadding().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            MeshButton(
+                text = if (showJoin) "Cancel" else "Join list",
+                onClick = {
+                    showJoin = !showJoin
+                    showNewList = false
+                    joinViewModel.reset()
+                },
+                modifier = Modifier.weight(1f),
+                danger = showJoin
+            )
+            MeshButton(
+                text = if (showNewList) "Cancel" else "+ New list",
+                onClick = { showNewList = !showNewList; showJoin = false },
+                modifier = Modifier.weight(1f),
+                danger = showNewList
+            )
         }
     }
 }
 
 @Composable
-private fun ListRow(list: ShoppingList, isOwner: Boolean, onClick: () -> Unit, onDelete: () -> Unit) {
+private fun ListRow(
+    list: ShoppingList,
+    isOwner: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
     MeshCard(onClick = onClick) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
+        Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
                 Text(list.name, style = MaterialTheme.typography.titleMedium.copy(color = TextPrimary))
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip(text = if (isOwner) "Owner" else "Member", textColor = if (isOwner) Accent else TextSecondary, bgColor = if (isOwner) AccentLight else SurfaceWarm)
-                    Chip(text = "${list.members.size + 1} peers", textColor = TextSecondary, bgColor = SurfaceWarm)
+                    Chip(
+                        text = if (isOwner) "Owner" else "Member",
+                        textColor = if (isOwner) Accent else TextSecondary,
+                        bgColor = if (isOwner) AccentLight else SurfaceWarm
+                    )
+                    Chip("${list.members.size + 1} peers", TextSecondary, SurfaceWarm)
                 }
             }
             if (isOwner) {
-                IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted) }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = null, tint = TextMuted)
+                }
             }
         }
     }
@@ -127,13 +232,14 @@ private fun ListRow(list: ShoppingList, isOwner: Boolean, onClick: () -> Unit, o
 
 @Composable
 private fun Chip(text: String, textColor: Color, bgColor: Color) {
-    Box(modifier = Modifier.background(bgColor, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+    Box(Modifier.background(bgColor, RoundedCornerShape(6.dp))
+        .padding(horizontal = 8.dp, vertical = 3.dp)) {
         Text(text, style = MaterialTheme.typography.labelSmall.copy(color = textColor))
     }
 }
 
 @Composable
-private fun EmptyState(onCreateClick: () -> Unit) {
+private fun EmptyState(onCreateClick: () -> Unit, onJoinClick: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -143,29 +249,24 @@ private fun EmptyState(onCreateClick: () -> Unit) {
         Spacer(Modifier.height(16.dp))
         Text("No lists yet", style = MaterialTheme.typography.titleLarge.copy(color = TextPrimary))
         Spacer(Modifier.height(8.dp))
-        Text(
-            "Create a new list, or connect to a peer\nwho has invited you to theirs.",
+        Text("Create a new list, or join one from a peer who invited you.",
             style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary),
-            textAlign = TextAlign.Center
-        )
+            textAlign = TextAlign.Center)
         Spacer(Modifier.height(12.dp))
-        // Explain restore behaviour clearly
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(AccentLight)
-                .padding(14.dp),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                .background(AccentLight).padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.Top
         ) {
             Text("ℹ️", fontSize = 16.sp)
-            Text(
-                "Restored your identity? Your lists will re-appear automatically once you connect to a peer who has them.",
-                style = MaterialTheme.typography.bodyMedium.copy(color = AccentDark)
-            )
+            Text("Restored your identity? Your lists will re-appear once you connect to a peer who has them.",
+                style = MaterialTheme.typography.bodyMedium.copy(color = AccentDark))
         }
         Spacer(Modifier.height(32.dp))
-        MeshButton("Create your first list", onClick = onCreateClick)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MeshButton("Join list", onClick = onJoinClick)
+            MeshButton("Create list", onClick = onCreateClick)
+        }
     }
 }
