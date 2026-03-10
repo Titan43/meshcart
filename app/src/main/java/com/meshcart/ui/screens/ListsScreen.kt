@@ -1,6 +1,11 @@
 package com.meshcart.ui.screens
 
-import androidx.compose.animation.*
+import android.content.Intent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,24 +37,25 @@ import com.meshcart.ui.viewmodel.ListsViewModel
 fun ListsScreen(
     onListClick: (ListId) -> Unit,
     onSettings: () -> Unit,
-    autoJoinUri: String? = null,
     listsViewModel: ListsViewModel = hiltViewModel(),
     joinViewModel: JoinViewModel = hiltViewModel()
 ) {
     val listsState by listsViewModel.uiState.collectAsStateWithLifecycle()
     val joinState  by joinViewModel.state.collectAsStateWithLifecycle()
+    val pendingCode by joinViewModel.pendingCode.collectAsStateWithLifecycle()
 
     var newListName  by remember { mutableStateOf("") }
     var showNewList  by remember { mutableStateOf(false) }
     var showJoin     by remember { mutableStateOf(false) }
     var joinInput    by remember { mutableStateOf("") }
 
-    LaunchedEffect(autoJoinUri) {
-        if (autoJoinUri != null) {
-            joinInput = autoJoinUri
-            showJoin = true
-            joinViewModel.submit(autoJoinUri)
-        }
+    // Deep link / QR scan: open join panel and pre-fill the code
+    LaunchedEffect(pendingCode) {
+        val code = pendingCode ?: return@LaunchedEffect
+        joinInput = code
+        showJoin = true
+        showNewList = false
+        joinViewModel.consumePendingCode()
     }
 
     LaunchedEffect(joinState) {
@@ -118,30 +124,40 @@ fun ListsScreen(
                 exit = shrinkVertically() + fadeOut()) {
                 Column {
                     Spacer(Modifier.height(16.dp))
-                    Text("Paste an invite link from the list owner",
-                        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
-                    Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        MeshInput(
-                            value = joinInput,
-                            onValueChange = { joinInput = it },
-                            placeholder = "meshcart://sdp?…",
-                            modifier = Modifier.weight(1f),
-                            onDone = { joinViewModel.submit(joinInput) }
-                        )
-                        when (joinState) {
-                            is JoinUiState.Connecting -> {
-                                CircularProgressIndicator(color = Accent, strokeWidth = 2.dp,
-                                    modifier = Modifier.size(24.dp))
-                            }
-                            else -> MeshButton("Join", onClick = { joinViewModel.submit(joinInput) })
+                    when (val js = joinState) {
+                        is JoinUiState.Connected -> {
+                            Text("✓ Connected! The list will appear shortly.",
+                                style = MaterialTheme.typography.bodySmall.copy(color = Accent))
                         }
-                    }
-                    if (joinState is JoinUiState.Error) {
-                        Spacer(Modifier.height(6.dp))
-                        Text((joinState as JoinUiState.Error).message,
-                            style = MaterialTheme.typography.bodySmall.copy(color = Danger))
+                        else -> {
+                            Text("Enter the 6-letter code from the list owner",
+                                style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
+                            Spacer(Modifier.height(8.dp))
+                            Row(Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                MeshInput(
+                                    value = joinInput,
+                                    onValueChange = { joinInput = it.uppercase().take(6) },
+                                    placeholder = "ABC123",
+                                    modifier = Modifier.weight(1f),
+                                    onDone = { joinViewModel.submit(joinInput) }
+                                )
+                                when (js) {
+                                    is JoinUiState.Connecting ->
+                                        CircularProgressIndicator(color = Accent, strokeWidth = 2.dp,
+                                            modifier = Modifier.size(24.dp))
+                                    else -> MeshButton("Join",
+                                        onClick = { joinViewModel.submit(joinInput) },
+                                        enabled = joinInput.length == 6)
+                                }
+                            }
+                            if (js is JoinUiState.Error) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(js.message,
+                                    style = MaterialTheme.typography.bodySmall.copy(color = Danger))
+                            }
+                        }
                     }
                 }
             }

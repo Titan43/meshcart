@@ -35,7 +35,7 @@ class WebRtcTransportAdapter(context: Context) : TransportPort {
         val gatherDone    = CompletableDeferred<Unit>()
         val hasCandidate  = CompletableDeferred<Unit>()
         val stateFlow     = MutableStateFlow(DataChannel.State.CONNECTING)
-        val incomingFlow  = MutableSharedFlow<ByteArray>()
+        val incomingFlow  = MutableSharedFlow<ByteArray>(replay = 8, extraBufferCapacity = 64)
 
         val pc = buildPc(
             onCandidate     = { hasCandidate.complete(Unit) },
@@ -54,41 +54,44 @@ class WebRtcTransportAdapter(context: Context) : TransportPort {
     }
 
     suspend fun createAnswer(offerSdp: String, remoteNodeId: NodeId, scope: CoroutineScope): AnswerHandle {
-        val gatherDone   = CompletableDeferred<Unit>()
-        val hasCandidate = CompletableDeferred<Unit>()
-        val stateFlow    = MutableStateFlow(DataChannel.State.CONNECTING)
-        val incomingFlow = MutableSharedFlow<ByteArray>()
+        val gatherDone    = CompletableDeferred<Unit>()
+        val hasCandidate  = CompletableDeferred<Unit>()
+        val stateFlow     = MutableStateFlow(DataChannel.State.CONNECTING)
+        val incomingFlow  = MutableSharedFlow<ByteArray>(replay = 8, extraBufferCapacity = 64)
         val remoteChannel = CompletableDeferred<DataChannel>()
 
         val pc = buildPc(
             onCandidate     = { hasCandidate.complete(Unit) },
             onGatheringDone = { gatherDone.complete(Unit) },
             onDataChannel   = { dc ->
+                android.util.Log.d("WebRTC", "onDataChannel fired: ${dc.label()}")
                 dc.registerObserver(dcObserver(stateFlow, incomingFlow, dc))
                 remoteChannel.complete(dc)
             }
         )
 
         pc.awaitSetRemoteDescription(SessionDescription(SessionDescription.Type.OFFER, offerSdp))
-
-        val channel = withTimeoutOrNull(8_000) { remoteChannel.await() }
-            ?: run {
-                pc.close()
-                throw PeerConnectionException("Invite link has expired — ask the owner to generate a new one")
-            }
+        android.util.Log.d("WebRTC", "setRemoteDescription done, signalingState=${pc.signalingState()}")
 
         val answer = pc.awaitCreateSdp(isOffer = false)
         pc.awaitSetLocalDescription(answer)
-        awaitIceGathering(gatherDone, hasCandidate)
+        android.util.Log.d("WebRTC", "setLocalDescription done, signalingState=${pc.signalingState()}")
 
-        val conn = WebRtcMeshConnection(remoteNodeId, pc, channel, stateFlow, incomingFlow, this, scope)
+        awaitIceGathering(gatherDone, hasCandidate)
+        android.util.Log.d("WebRTC", "ICE gathering done — returning answer SDP")
+
+        // Return immediately with answer SDP so JoinViewModel can publish it to MQTT.
+        // onDataChannel fires later (after ICE connects) — awaitOpen() waits for it.
+        val conn = WebRtcMeshConnection(remoteNodeId, pc, remoteChannel, stateFlow, incomingFlow, this, scope)
         return AnswerHandle(conn, pc.localDescription.description)
     }
 
     suspend fun completeOffer(handle: OfferHandle, answerSdp: String): MeshConnection {
         handle.pc.awaitSetRemoteDescription(SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
+        val channelDeferred = CompletableDeferred<DataChannel>()
+        channelDeferred.complete(handle.channel) // offerer created channel directly — already available
         val conn = WebRtcMeshConnection(
-            handle.remoteNodeId, handle.pc, handle.channel,
+            handle.remoteNodeId, handle.pc, channelDeferred,
             handle.stateFlow, handle.incomingFlow, this, handle.scope
         )
         conn.awaitOpen()
@@ -207,7 +210,7 @@ class AnswerHandle(
 class WebRtcMeshConnection(
     override val remoteNodeId: NodeId,
     private val pc:            PeerConnection,
-    private val channel:       DataChannel,
+    private val channelDeferred: CompletableDeferred<DataChannel>,
     private val stateFlow:     MutableStateFlow<DataChannel.State>,
     private val incomingFlow:  MutableSharedFlow<ByteArray>,
     private val adapter:       WebRtcTransportAdapter,
@@ -284,19 +287,22 @@ class WebRtcMeshConnection(
     }
 
     suspend fun awaitOpen() {
-        if (channel.state() == DataChannel.State.OPEN) return
-        withTimeout(30_000) { _connState.first { it is ConnectionState.Connected } }
+        withTimeout(45_000) { _connState.first { it is ConnectionState.Connected } }
     }
 
     override suspend fun send(data: ByteArray) {
         if (_connState.value is ConnectionState.Reconnecting)
             withTimeout(30_000) { _connState.first { it is ConnectionState.Connected } }
-        if (channel.state() != DataChannel.State.OPEN) awaitOpen()
+        val channel = withTimeout(45_000) { channelDeferred.await() }
         if (!channel.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(data), true)))
             throw PeerConnectionException("DataChannel send failed")
     }
 
-    override fun close() { scope.cancel(); channel.close(); pc.close() }
+    override fun close() {
+        scope.cancel()
+        if (channelDeferred.isCompleted) channelDeferred.getCompleted().close()
+        pc.close()
+    }
 
     // Private helper so ICE restart can pass custom constraints
     private suspend fun PeerConnection.awaitCreateSdp(

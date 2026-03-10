@@ -1,15 +1,11 @@
 package com.meshcart
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -18,44 +14,34 @@ import androidx.navigation.navArgument
 import com.meshcart.ui.screens.*
 import com.meshcart.ui.theme.MeshCartTheme
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    private val initialDeepLink = MutableStateFlow<String?>(null)
-    private val newIntentDeepLink = MutableStateFlow<String?>(null)
+    @Inject lateinit var deepLinkFlow: MutableSharedFlow<String>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        initialDeepLink.value = intent?.data?.toString()?.takeIf { it.startsWith("meshcart://sdp") }
-        setContent {
-            val initial by initialDeepLink.collectAsStateWithLifecycle()
-            val incoming by newIntentDeepLink.collectAsStateWithLifecycle()
-            MeshCartTheme { MeshCartNav(initial, incoming) }
-        }
+        intent?.data?.toString()?.takeIf { it.startsWith("meshcart://join") }
+            ?.let { deepLinkFlow.tryEmit(it) }
+        setContent { MeshCartTheme { MeshCartNav() } }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        newIntentDeepLink.value = intent.data?.toString()?.takeIf { it.startsWith("meshcart://sdp") }
+        intent.data?.toString()?.takeIf { it.startsWith("meshcart://join") }
+            ?.let { deepLinkFlow.tryEmit(it) }
     }
 }
 
 @Composable
-private fun MeshCartNav(initialDeepLink: String?, incomingDeepLink: String?) {
-    val startDest = if (initialDeepLink != null) "lists?join=${Uri.encode(initialDeepLink)}" else "onboarding"
+private fun MeshCartNav() {
     val nav = rememberNavController()
 
-    LaunchedEffect(incomingDeepLink) {
-        val uri = incomingDeepLink ?: return@LaunchedEffect
-        nav.navigate("lists?join=${Uri.encode(uri)}") {
-            popUpTo("lists") { inclusive = false }
-        }
-    }
-
-    NavHost(nav, startDestination = startDest) {
+    NavHost(nav, startDestination = "onboarding") {
 
         composable("onboarding") {
             OnboardingScreen(onComplete = {
@@ -63,19 +49,10 @@ private fun MeshCartNav(initialDeepLink: String?, incomingDeepLink: String?) {
             })
         }
 
-        composable(
-            route = "lists?join={joinUri}",
-            arguments = listOf(navArgument("joinUri") {
-                type = NavType.StringType
-                nullable = true
-                defaultValue = null
-            })
-        ) { back ->
-            val joinUri = back.arguments?.getString("joinUri")
+        composable("lists") {
             ListsScreen(
                 onListClick = { nav.navigate("list/${it.value}") },
-                onSettings  = { nav.navigate("revoke") },
-                autoJoinUri = joinUri
+                onSettings  = { nav.navigate("revoke") }
             )
         }
 

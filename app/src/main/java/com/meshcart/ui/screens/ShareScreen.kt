@@ -1,6 +1,5 @@
 package com.meshcart.ui.screens
 
-import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,12 +15,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.meshcart.ui.components.*
@@ -37,6 +35,8 @@ fun ShareScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     Column(Modifier.fillMaxSize().background(Background).statusBarsPadding()) {
+
+        // Top bar
         Row(
             modifier = Modifier.fillMaxWidth().background(Surface)
                 .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -50,109 +50,128 @@ fun ShareScreen(
         MeshDivider()
 
         when (val s = state) {
+
             is ShareUiState.Generating -> {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Accent, strokeWidth = 2.dp)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CircularProgressIndicator(color = Accent, strokeWidth = 2.dp)
+                        Text("Preparing invite…",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary))
+                    }
                 }
             }
-            is ShareUiState.Ready -> ReadyPane(s, viewModel::retry, onBack)
+
+            is ShareUiState.Ready -> {
+                val clipboard = LocalClipboardManager.current
+                var copied by remember { mutableStateOf(false) }
+
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Spacer(Modifier.height(16.dp))
+                    Text("Share this code",
+                        style = MaterialTheme.typography.headlineSmall.copy(color = TextPrimary))
+                    Text("The other person taps Join and enters this code.",
+                        style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 6.dp, bottom = 28.dp))
+
+                    // Big bold code
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Surface)
+                            .border(1.dp, Border, RoundedCornerShape(16.dp))
+                            .padding(horizontal = 32.dp, vertical = 20.dp)
+                    ) {
+                        Text(
+                            text = s.code,
+                            fontSize = 48.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 8.sp,
+                            color = Accent
+                        )
+                    }
+
+                    Spacer(Modifier.height(24.dp))
+
+                    // QR alternative
+                    Box(
+                        modifier = Modifier.size(180.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Surface)
+                            .border(1.dp, Border, RoundedCornerShape(16.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            bitmap = s.qr.asImageBitmap(),
+                            contentDescription = "QR code",
+                            modifier = Modifier.size(140.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("or scan QR",
+                        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
+
+                    Spacer(Modifier.weight(1f))
+
+                    MeshButton(
+                        text = if (copied) "✓ Copied" else "Copy code",
+                        onClick = { clipboard.setText(AnnotatedString(s.code)); copied = true },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PulsingDot()
+                        Text("Waiting for them to enter the code…",
+                            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
+                    }
+                }
+            }
+
+            is ShareUiState.Connecting -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CircularProgressIndicator(color = Accent, strokeWidth = 2.dp)
+                        Text("Connecting…",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary))
+                    }
+                }
+            }
+
+            is ShareUiState.Connected -> {
+                Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text("✓ Connected!",
+                            style = MaterialTheme.typography.headlineSmall.copy(color = Accent))
+                        Text("They now have access to this list.",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary),
+                            textAlign = TextAlign.Center)
+                        MeshButton("Done", onClick = onBack)
+                    }
+                }
+            }
+
             is ShareUiState.Error -> {
                 Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text(s.message, style = MaterialTheme.typography.bodyMedium.copy(color = Danger),
+                        Text(s.message,
+                            style = MaterialTheme.typography.bodyMedium.copy(color = Danger),
                             textAlign = TextAlign.Center)
-                        MeshButton("Retry", onClick = viewModel::retry)
+                        MeshButton("Try again", onClick = viewModel::retry)
+                        TextButton(onClick = onBack) {
+                            Text("Cancel",
+                                style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
+                        }
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ReadyPane(state: ShareUiState.Ready, onRetry: () -> Unit, onBack: () -> Unit) {
-    val context   = LocalContext.current
-    val clipboard = LocalClipboardManager.current
-    var copied by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(Modifier.height(12.dp))
-        Text("Let them scan this QR",
-            style = MaterialTheme.typography.headlineSmall.copy(color = TextPrimary))
-        Text("Or share the link if they're not nearby. Expires once used.",
-            style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary),
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
-
-        Box(
-            modifier = Modifier.size(260.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(Surface)
-                .border(1.dp, Border, RoundedCornerShape(20.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Image(
-                bitmap = state.qr.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier.size(220.dp).clip(RoundedCornerShape(8.dp))
-            )
-        }
-
-        Spacer(Modifier.height(20.dp))
-
-        Box(
-            modifier = Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(SurfaceWarm)
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-        ) {
-            Text(state.shareUrl,
-                style = MaterialTheme.typography.labelSmall.copy(color = TextSecondary),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis)
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MeshButton(
-                text = if (copied) "✓ Copied" else "Copy link",
-                onClick = { clipboard.setText(AnnotatedString(state.shareUrl)); copied = true },
-                modifier = Modifier.weight(1f)
-            )
-            MeshButton(
-                text = "Share",
-                onClick = {
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, state.shareUrl)
-                    }
-                    ContextCompat.startActivity(context, Intent.createChooser(intent, null), null)
-                },
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        TextButton(onClick = onRetry) {
-            Icon(Icons.Default.Refresh, contentDescription = null, tint = TextSecondary,
-                modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Generate new invite", style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary))
-        }
-
-        Spacer(Modifier.weight(1f))
-
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PulsingDot()
-            Text("Waiting for peer to scan…",
-                style = MaterialTheme.typography.bodyMedium.copy(color = TextSecondary))
         }
     }
 }

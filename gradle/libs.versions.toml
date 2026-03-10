@@ -18,7 +18,7 @@ hilt = "2.59.1"
 nav-compose = "2.8.4"
 hilt-navigation-compose = "1.2.0"
 lifecycle-compose = "2.8.7"
-zxing = "3.5.3"
+zxing     = "3.5.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

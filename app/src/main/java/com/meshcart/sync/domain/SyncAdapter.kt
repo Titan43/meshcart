@@ -1,37 +1,38 @@
 package com.meshcart.sync.domain
 
+import android.util.Log
 import com.meshcart.identity.domain.Identity
 import com.meshcart.p2p.domain.MeshConnection
 import com.meshcart.ratchet.domain.*
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+private const val TAG = "SyncAdapter"
+
 // ── Wire types ────────────────────────────────────────────────────────────────
 
-/** Unencrypted handshake envelope — carries X3DH public key material only. */
 @Serializable
 private data class WireHandshake(
-    /** Sender's X3DH bundle so the recipient can complete the exchange. */
-    val identityPublic: ByteArray,
-    val signedPreKeyPublic: ByteArray,
+    val identityPublic:        ByteArray,
+    val signedPreKeyPublic:    ByteArray,
     val signedPreKeySignature: ByteArray,
-    val oneTimePreKeyPublic: ByteArray,
-    /** X3DH init message from the sender (empty if this is a bundle-only advertisement). */
-    val ephemeralPublic: ByteArray? = null,
-    val senderIdentityPublic: ByteArray? = null
+    val oneTimePreKeyPublic:   ByteArray,
+    // null = bundle-only advertisement; non-null = X3DH init message
+    val ephemeralPublic:       ByteArray? = null,
+    val senderIdentityPublic:  ByteArray? = null
 )
 
-/** Encrypted message envelope. */
 @Serializable
 private data class WireMessage(
-    val dhPublicKey: ByteArray,
+    val dhPublicKey:   ByteArray,
     val prevSendCount: Int,
     val messageNumber: Int,
-    val ciphertext: ByteArray
+    val ciphertext:    ByteArray
 ) {
     fun toRatchetMessage() = RatchetMessage(
         header = RatchetHeader(dhPublicKey, prevSendCount, messageNumber),
@@ -39,43 +40,62 @@ private data class WireMessage(
     )
 }
 
-/** Top-level frame — either a handshake or an encrypted message. */
 @Serializable
 private sealed class WireFrame {
-    @Serializable @SerialName("hs") data class Handshake(val payload: WireHandshake) : WireFrame()
-    @Serializable @SerialName("msg") data class Message(val payload: WireMessage) : WireFrame()
+    @Serializable @SerialName("hs")  data class Handshake(val payload: WireHandshake) : WireFrame()
+    @Serializable @SerialName("msg") data class Message(val payload: WireMessage)     : WireFrame()
 }
 
 // ── SyncAdapter ───────────────────────────────────────────────────────────────
 
 class SyncAdapter(
     private val identity: Identity,
-    private val x3dh: X3dhPort,
-    private val ratchet: RatchetPort,
+    private val x3dh:     X3dhPort,
+    private val ratchet:  RatchetPort,
     private val sessions: RatchetSessionStoragePort
 ) : SyncPort {
 
-    // Stores the SPK private key generated for our bundle so initAsRecipient can use it.
-    // Keyed by the public key hex to handle bundle rotation.
+    // SPK private keys keyed by SPK public hex
     private val pendingSpkPrivate = mutableMapOf<String, ByteArray>()
 
+    // Per-peer channel that fires Unit when a session is established
+    // — used to unblock send() callers waiting for handshake
+    private val sessionReady = mutableMapOf<String, Channel<Unit>>()
+
+    private fun sessionChannel(peerId: String) =
+        sessionReady.getOrPut(peerId) { Channel(Channel.CONFLATED) }
+
     /**
-     * Send an encrypted [SyncMessage] to [connection].
-     *
-     * If no ratchet session exists yet this node acts as the X3DH **initiator**:
-     * 1. Advertise our own bundle so the peer can reply to us later.
-     * 2. Send an X3DH init message using a *stub* recipient bundle derived from
-     *    the peer's known identity key (stored when they invited us / we invited them).
-     *    The recipient completes the session when they receive the init message.
+     * Step 1 of handshake — called by SyncEngine immediately after peer connects.
+     * Sends our bundle advertisement so the peer knows our real X3DH keys.
+     */
+    suspend fun advertiseBundle(connection: MeshConnection) {
+        val (bundle, spkPriv) = x3dh.generateBundleWithPrivateKey(identity)
+        pendingSpkPrivate[bundle.signedPreKeyPublic.toHex()] = spkPriv
+
+        val advert = WireHandshake(
+            identityPublic        = bundle.identityPublic,
+            signedPreKeyPublic    = bundle.signedPreKeyPublic,
+            signedPreKeySignature = bundle.signedPreKeySignature,
+            oneTimePreKeyPublic   = bundle.oneTimePreKeyPublic
+            // ephemeralPublic = null → bundle-only
+        )
+        Log.d(TAG, "Advertising bundle to ${connection.remoteNodeId.value.take(8)}")
+        sendFrame(connection, WireFrame.Handshake(advert))
+    }
+
+    /**
+     * Send a [SyncMessage]. If no session exists yet, waits up to 30s for
+     * the handshake to complete (driven by the receive() flow).
      */
     override suspend fun send(connection: MeshConnection, message: SyncMessage) {
-        val session = sessions.load(connection.remoteNodeId) ?: run {
-            initiateSession(connection)
-            sessions.load(connection.remoteNodeId)
-                ?: throw IllegalStateException(
-                    "X3DH initiation failed for ${connection.remoteNodeId.value}"
-                )
+        val peerId = connection.remoteNodeId.value
+        if (sessions.load(connection.remoteNodeId) == null) {
+            Log.d(TAG, "No session yet for ${peerId.take(8)}, waiting for handshake…")
+            withTimeout(30_000) { sessionChannel(peerId).receive() }
         }
+        val session = sessions.load(connection.remoteNodeId)
+            ?: throw IllegalStateException("Session disappeared for $peerId")
         sendEncrypted(connection, session, message)
     }
 
@@ -87,8 +107,12 @@ class SyncAdapter(
 
             when (frame) {
                 is WireFrame.Handshake -> {
-                    handleHandshake(connection, frame.payload)
-                    null  // handshake is infrastructure — not a SyncMessage
+                    // Launch separately so we can send (X3DH init) without deadlocking
+                    // the DataChannel receive callback thread
+                    CoroutineScope(Dispatchers.IO).launch {
+                        handleHandshake(connection, frame.payload)
+                    }
+                    null
                 }
                 is WireFrame.Message -> {
                     val session = sessions.load(connection.remoteNodeId)
@@ -102,78 +126,117 @@ class SyncAdapter(
             }
         }
 
-    // ── private helpers ───────────────────────────────────────────────────────
+    // ── Private: handshake state machine ─────────────────────────────────────
 
-    private suspend fun initiateSession(connection: MeshConnection) {
-        val (localBundle, spkPriv) = x3dh.generateBundleWithPrivateKey(identity)
-        pendingSpkPrivate[localBundle.signedPreKeyPublic.toHex()] = spkPriv
+    private suspend fun handleHandshake(connection: MeshConnection, hs: WireHandshake) {
+        val peerId = connection.remoteNodeId.value
 
-        // Advertise our bundle so the peer can respond with an X3DH init
-        val advertisement = WireHandshake(
-            identityPublic        = localBundle.identityPublic,
-            signedPreKeyPublic    = localBundle.signedPreKeyPublic,
-            signedPreKeySignature = localBundle.signedPreKeySignature,
-            oneTimePreKeyPublic   = localBundle.oneTimePreKeyPublic
-        )
-        connection.send(Json.encodeToString<WireFrame>(WireFrame.Handshake(advertisement)).toByteArray())
+        if (hs.ephemeralPublic != null) {
+            // ── Recipient path: we received a full X3DH init message ──────────
+            Log.d(TAG, "Received X3DH init from ${peerId.take(8)}")
+            if (sessions.load(connection.remoteNodeId) != null) {
+                Log.d(TAG, "Session already exists, ignoring duplicate init")
+                return
+            }
 
-        // Build a recipient bundle from the peer's known identity key.
-        // The peer completes the session when they receive our init message.
-        val peerIdBytes = connection.remoteNodeId.value
-            .chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-        val recipientBundle = X3dhBundle(
-            identityPublic        = peerIdBytes,
-            signedPreKeyPublic    = peerIdBytes,
-            signedPreKeySignature = ByteArray(64),
-            oneTimePreKeyPublic   = peerIdBytes
-        )
+            // Find the matching SPK private key (we advertised it earlier)
+            val spkHex = hs.signedPreKeyPublic.toHex()
+            val spkPriv = pendingSpkPrivate[spkHex] ?: run {
+                // Shouldn't happen in normal flow, but recover gracefully
+                Log.w(TAG, "No pending SPK for $spkHex — generating fresh one")
+                val (b, p) = x3dh.generateBundleWithPrivateKey(identity)
+                pendingSpkPrivate[b.signedPreKeyPublic.toHex()] = p
+                p
+            }
 
-        val (session, initMsg) = x3dh.initAsSender(identity, recipientBundle)
-        sessions.save(session)
-
-        val initHandshake = WireHandshake(
-            identityPublic        = localBundle.identityPublic,
-            signedPreKeyPublic    = localBundle.signedPreKeyPublic,
-            signedPreKeySignature = localBundle.signedPreKeySignature,
-            oneTimePreKeyPublic   = localBundle.oneTimePreKeyPublic,
-            ephemeralPublic       = initMsg.ephemeralPublic,
-            senderIdentityPublic  = initMsg.senderIdentityPublic
-        )
-        connection.send(Json.encodeToString<WireFrame>(WireFrame.Handshake(initHandshake)).toByteArray())
-    }
-
-    private fun handleHandshake(connection: MeshConnection, hs: WireHandshake) {
-        if (hs.ephemeralPublic == null) return
-        if (sessions.load(connection.remoteNodeId) != null) return
-
-        val (localBundle, spkPriv) = x3dh.generateBundleWithPrivateKey(identity)
-        val spkHex = localBundle.signedPreKeyPublic.toHex()
-        pendingSpkPrivate[spkHex] = spkPriv
-
-        val initMsg = X3dhInitMessage(
-            ephemeralPublic      = hs.ephemeralPublic,
-            senderIdentityPublic = hs.senderIdentityPublic ?: return
-        )
-        val session = runCatching {
-            x3dh.initAsRecipient(
-                identity                  = identity,
-                initMessage               = initMsg,
-                localBundle               = localBundle,
-                localSignedPreKeyPrivate  = spkPriv,
-                localOneTimePreKeyPrivate = spkPriv
+            val (localBundle, localSpkPriv) = x3dh.generateBundleWithPrivateKey(identity)
+            val initMsg = X3dhInitMessage(
+                ephemeralPublic      = hs.ephemeralPublic,
+                senderIdentityPublic = hs.senderIdentityPublic ?: run {
+                    Log.e(TAG, "Missing senderIdentityPublic in init message")
+                    return
+                }
             )
-        }.getOrNull() ?: return
 
-        pendingSpkPrivate.remove(spkHex)
-        sessions.save(session)
+            val session = runCatching {
+                x3dh.initAsRecipient(
+                    identity                  = identity,
+                    initMessage               = initMsg,
+                    localBundle               = localBundle,
+                    localSignedPreKeyPrivate  = localSpkPriv,
+                    localOneTimePreKeyPrivate = localSpkPriv
+                )
+            }.onFailure { Log.e(TAG, "initAsRecipient failed: ${it.message}") }
+                .getOrNull() ?: return
+
+            pendingSpkPrivate.remove(spkHex)
+            sessions.save(session)
+            Log.d(TAG, "✓ Session established as RECIPIENT with ${peerId.take(8)}")
+            sessionChannel(peerId).trySend(Unit)
+
+        } else {
+            // ── Initiator path: we received a bundle advertisement ────────────
+            Log.d(TAG, "Received bundle advert from ${peerId.take(8)}")
+
+            if (sessions.load(connection.remoteNodeId) != null) {
+                Log.d(TAG, "Session already exists, ignoring advert")
+                return
+            }
+
+            // Deterministic tie-break using the bundle's actual identity public key bytes
+            // (connection.remoteNodeId is unreliable — both sides currently pass their OWN nodeId)
+            val peerKeyHex = hs.identityPublic.joinToString("") { "%02x".format(it) }
+            val ourKeyHex  = identity.encryptionPublicKey.bytes.joinToString("") { "%02x".format(it) }
+            val weInitiate = ourKeyHex < peerKeyHex
+            if (!weInitiate) {
+                Log.d(TAG, "We are RESPONDER (our=${ ourKeyHex.take(8)}, peer=${peerKeyHex.take(8)}) — waiting for their X3DH init")
+                return
+            }
+
+            Log.d(TAG, "We are INITIATOR (our=${ourKeyHex.take(8)}, peer=${peerKeyHex.take(8)}) — performing X3DH")
+
+            val recipientBundle = X3dhBundle(
+                identityPublic        = hs.identityPublic,
+                signedPreKeyPublic    = hs.signedPreKeyPublic,
+                signedPreKeySignature = hs.signedPreKeySignature,
+                oneTimePreKeyPublic   = hs.oneTimePreKeyPublic
+            )
+
+            val (localBundle, spkPriv) = x3dh.generateBundleWithPrivateKey(identity)
+            pendingSpkPrivate[localBundle.signedPreKeyPublic.toHex()] = spkPriv
+
+            val (session, initMsg) = runCatching {
+                x3dh.initAsSender(identity, recipientBundle)
+            }.onFailure { Log.e(TAG, "initAsSender failed: ${it.message}") }
+                .getOrNull() ?: return
+
+            sessions.save(session)
+
+            val initHandshake = WireHandshake(
+                identityPublic        = localBundle.identityPublic,
+                signedPreKeyPublic    = localBundle.signedPreKeyPublic,
+                signedPreKeySignature = localBundle.signedPreKeySignature,
+                oneTimePreKeyPublic   = localBundle.oneTimePreKeyPublic,
+                ephemeralPublic       = initMsg.ephemeralPublic,
+                senderIdentityPublic  = initMsg.senderIdentityPublic
+            )
+            sendFrame(connection, WireFrame.Handshake(initHandshake))
+
+            Log.d(TAG, "✓ Session established as INITIATOR with ${peerId.take(8)}")
+            sessionChannel(peerId).trySend(Unit)
+        }
     }
 
-    private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
+    // ── Private: send helpers ─────────────────────────────────────────────────
+
+    private suspend fun sendFrame(connection: MeshConnection, frame: WireFrame) {
+        connection.send(Json.encodeToString(frame).toByteArray())
+    }
 
     private suspend fun sendEncrypted(
         connection: MeshConnection,
-        session: RatchetSession,
-        message: SyncMessage
+        session:    RatchetSession,
+        message:    SyncMessage
     ) {
         val (nextSession, ratchetMsg) = ratchet.encrypt(
             session,
@@ -186,6 +249,8 @@ class SyncAdapter(
             messageNumber = ratchetMsg.header.messageNumber,
             ciphertext    = ratchetMsg.ciphertext
         )
-        connection.send(Json.encodeToString<WireFrame>(WireFrame.Message(wire)).toByteArray())
+        sendFrame(connection, WireFrame.Message(wire))
     }
+
+    private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
 }

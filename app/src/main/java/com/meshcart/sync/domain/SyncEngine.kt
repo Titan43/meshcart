@@ -18,13 +18,16 @@ class SyncEngine(
     private val scope: CoroutineScope
 ) {
     fun onPeerConnected(connection: MeshConnection) {
+        // Start receive() FIRST so no incoming bytes are missed before advertiseBundle()
+        sync.receive(connection).onEach { message -> handle(connection, message) }.launchIn(scope)
+
         scope.launch {
             if (connection is WebRtcMeshConnection) connection.awaitOpen()
+            // Step 1: advertise our X3DH bundle — triggers handshake via receive() flow
+            (sync as? SyncAdapter)?.advertiseBundle(connection)
+            // Step 2: send Hello — SyncAdapter.send() suspends until handshake completes
             sync.send(connection, SyncMessage.Hello(identity.nodeId, state.allClocks()))
         }
-
-        // Receive and handle encrypted sync messages
-        sync.receive(connection).onEach { message -> handle(connection, message) }.launchIn(scope)
 
         // If this connection supports ICE restart, relay the signalling
         // through the encrypted DataChannel so no extra out-of-band step is needed.
